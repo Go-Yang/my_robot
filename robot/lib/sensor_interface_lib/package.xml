@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>sensor_interface_lib</name>
+  <version>0.0.1</version>
+  <description>Sensor interface library</description>
+  <maintainer email="your_email@example.com">Your Name</maintainer>
+  <license>BSD-3-Clause</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+</package>
