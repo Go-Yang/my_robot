@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>my_robot_project</name>
+  <version>0.0.0</version>
+  <description>Main project for my_robot</description>
+  <maintainer email="your_email@example.com">Your Name</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>my_robot_msgs</depend>
+  <depend>robot_control_lib</depend>
+  <depend>sensor_interface_lib</depend>
+  <depend>mapping_lib</depend>
+  <depend>navigation_lib</depend>
+</package>

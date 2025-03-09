@@ -8,8 +8,8 @@
       "args": [],
       "stopAtEntry": false,
       "externalConsole": false,
-      "cwd": "/home/mars/my_robot/robot/src",
-      "program": "/home/mars/my_robot/robot/src/build/Debug/outDebug",
+      "cwd": "/home/mars/my_robot/my_robot_project/lib/mapping_lib/src",
+      "program": "/home/mars/my_robot/my_robot_project/lib/mapping_lib/src/build/Debug/outDebug",
       "MIMode": "gdb",
       "miDebuggerPath": "gdb",
       "setupCommands": [
