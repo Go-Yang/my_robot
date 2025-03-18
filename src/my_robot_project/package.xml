@@ -4,7 +4,7 @@
   <version>0.0.0</version>
   <description>Main project for my_robot</description>
   <maintainer email="your_email@example.com">Your Name</maintainer>
-  <license>BSD-3-Clause</license>
+  <license>BTODO</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>rclcpp</depend>
