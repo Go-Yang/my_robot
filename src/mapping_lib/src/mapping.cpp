@@ -7,7 +7,7 @@ void MappingModule::init(rclcpp::Node::SharedPtr node) {
     this->publisher_ = node_->create_publisher<my_robot_msgs::msg::MyCustomMessage>("custom_topic", 10);
 
     this->timer_ = node_->create_wall_timer(
-        std::chrono::milliseconds(10),
+        std::chrono::milliseconds(1000),
         std::bind(&MappingModule::publishMessage, this)
     );
 }
