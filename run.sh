@@ -3,7 +3,7 @@
 # 设置环境变量
 echo "Setting up environment..."
 source install/setup.bash
-source /opt/ros/foxy/setup.bash  # 根据你的 ROS 版本调整
+source /opt/ros/humble/setup.bash  # 根据你的 ROS 版本调整
 
 # 检查包是否存在
 echo "Checking if the package exists..."
