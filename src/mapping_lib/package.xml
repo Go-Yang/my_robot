@@ -1,15 +1,18 @@
-<?xml version="0.0"?>
+<?xml version="1.0"?>
 <package format="3">
   <name>mapping_lib</name>
   <version>0.0.0</version>
-  <description>Mapping library</description>
+  <description>占据栅格建图库</description>
   <maintainer email="you@example.com">Your Name</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>rclcpp</depend>
-  <depend>std_msgs</depend>
-  <depend>my_robot_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>sensor_interface_lib</depend>
 
   <export>
     <build_type>ament_cmake</build_type>

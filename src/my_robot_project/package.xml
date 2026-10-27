@@ -4,7 +4,7 @@
   <version>0.0.0</version>
   <description>Main project for my_robot</description>
   <maintainer email="your_email@example.com">Your Name</maintainer>
-  <license>BTODO</license>
+  <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>rclcpp</depend>
@@ -13,4 +13,8 @@
   <depend>sensor_interface_lib</depend>
   <depend>mapping_lib</depend>
   <depend>navigation_lib</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
 </package>

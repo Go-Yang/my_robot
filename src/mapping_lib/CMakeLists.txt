@@ -1,31 +1,37 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.8)
 project(mapping_lib)
 
 # 查找依赖
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(std_msgs REQUIRED)
-find_package(my_robot_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(sensor_interface_lib REQUIRED)
 
-# 添加库
+# 添加库：facade + 各后端实现
 add_library(${PROJECT_NAME} SHARED
   src/mapping.cpp
+  src/odom_grid_backend.cpp
+  src/slam_toolbox_backend.cpp
+  src/custom_slam_backend.cpp
 )
 
 # 包含头文件目录
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
-  # 添加ROS接口目录
-  ${rclcpp_INCLUDE_DIRS}
-  ${std_msgs_INCLUDE_DIRS}
 )
 
 # 链接依赖
 ament_target_dependencies(${PROJECT_NAME}
   rclcpp
-  std_msgs
-  my_robot_msgs
+  nav_msgs
+  sensor_msgs
+  geometry_msgs
+  tf2_ros
+  sensor_interface_lib
 )
 
 # 安装库
@@ -45,8 +51,11 @@ install(
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_export_dependencies(
   rclcpp
-  std_msgs  # 必须添加
-  my_robot_msgs
+  nav_msgs
+  sensor_msgs
+  geometry_msgs
+  tf2_ros
+  sensor_interface_lib
 )
 
 ament_package()
