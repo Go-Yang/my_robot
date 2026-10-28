@@ -42,8 +42,8 @@ public:
         goal_reached_distance_ =
             declare_parameter<double>("goal_reached_distance", 0.30);
         goal_timeout_ = declare_parameter<double>("goal_timeout", 180.0);
-        progress_timeout_ = declare_parameter<double>("progress_timeout", 15.0);
-        cooldown_ = declare_parameter<double>("cooldown", 1.0);
+        progress_timeout_ = declare_parameter<double>("progress_timeout", 8.0);
+        cooldown_ = declare_parameter<double>("cooldown", 0.5);
         blacklist_radius_ = declare_parameter<double>("blacklist_radius", 0.75);
         // 目标要离墙足够远，但 1 m 宽的走廊/门洞里 0.45 m 会没有可行格，
         // 取 0.35 m（机器人半径约 0.1 m + 安全余量）。
@@ -51,7 +51,8 @@ public:
         // 建图模块启动时会先发一张全未知地图；已知格太少时不能判定“探索完成”
         min_known_cells_ = declare_parameter<int>("min_known_cells", 500);
         min_target_distance_ =
-            declare_parameter<double>("min_target_distance", 1.5);
+            declare_parameter<double>("min_target_distance", 2.5);
+        heading_weight_ = declare_parameter<double>("heading_weight", 0.6);
         const double period = declare_parameter<double>("explore_period", 1.0);
 
         if (period <= 0.0 || goal_timeout_ <= 0.0) {
@@ -138,7 +139,7 @@ private:
         }
         robot_x_ = map_x;
         robot_y_ = map_y;
-        (void)map_yaw;
+        robot_yaw_ = map_yaw;
 
         const rclcpp::Time now = this->now();
 
@@ -153,7 +154,7 @@ private:
                 moving_ = false;
                 cooldown_until_ = now + rclcpp::Duration::from_seconds(cooldown_);
             } else {
-                if (dist < last_distance_ - 0.05) {
+                if (dist < last_distance_ - 0.15) {
                     last_distance_ = dist;
                     last_progress_time_ = now;
                 }
@@ -207,9 +208,18 @@ private:
             return;
         }
 
+        // 选择“距离 + 朝向偏差”最小的边界：优先继续朝当前方向探索，
+        // 减少每次到点后 180 度掉头，整体建图更快。
         const Cluster* best = nullptr;
+        double best_score = std::numeric_limits<double>::max();
         for (const auto& cluster : candidates) {
-            if (best == nullptr || cluster.nearest_dist < best->nearest_dist) {
+            const double heading = std::atan2(
+                cluster.nearest_y - robot_y_, cluster.nearest_x - robot_x_);
+            const double diff = std::abs(std::atan2(
+                std::sin(heading - robot_yaw_), std::cos(heading - robot_yaw_)));
+            const double score = cluster.nearest_dist + heading_weight_ * diff;
+            if (score < best_score) {
+                best_score = score;
                 best = &cluster;
             }
         }
@@ -543,12 +553,13 @@ private:
     int min_frontier_size_{3};
     double goal_reached_distance_{0.30};
     double goal_timeout_{180.0};
-    double progress_timeout_{15.0};
-    double cooldown_{1.0};
+    double progress_timeout_{8.0};
+    double cooldown_{0.5};
     double blacklist_radius_{0.75};
     double goal_clearance_{0.35};
     int min_known_cells_{500};
-    double min_target_distance_{1.5};
+    double min_target_distance_{2.5};
+    double heading_weight_{0.6};
 
     nav_msgs::msg::OccupancyGrid map_;
     bool have_map_{false};
@@ -561,6 +572,7 @@ private:
     std::string odom_frame_{"odom"};
     double robot_x_{0.0};  // map 系
     double robot_y_{0.0};
+    double robot_yaw_{0.0};
 
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;

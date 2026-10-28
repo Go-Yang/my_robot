@@ -13,4 +13,10 @@ install(DIRECTORY
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(PROGRAMS
+  scripts/wait_for_scan.py
+  scripts/activate_node.sh
+  DESTINATION share/${PROJECT_NAME}/scripts
+)
+
 ament_package()

@@ -79,14 +79,15 @@ private:
     // 参数
     double robot_radius_{0.25};       // 障碍膨胀半径（m）
     double start_clear_radius_{0.30}; // 规划时允许机器人附近这段膨胀区通行（脱困用）
-    double safety_distance_{0.30};    // 激光前向安全距离（m），低于此值只转向不前进
+    double safety_distance_{0.40};    // 激光前向安全距离（m），低于此值只转向不前进
+    double slow_distance_{1.00};      // 前方障碍小于此距离时线性减速（m）
     double unknown_penalty_{2.0};     // 未知格额外代价倍数（0 表示与空闲同价）
     double goal_tolerance_{0.15};     // 到达判定距离（m）
-    double max_linear_speed_{0.15};   // m/s
-    double max_angular_speed_{0.8};   // rad/s
-    double lookahead_distance_{0.40}; // 前视距离（m）
+    double max_linear_speed_{0.30};   // m/s（仿真里可超过 burger 硬件上限）
+    double max_angular_speed_{0.9};   // rad/s（降低角速度，保证 SLAM 扫描匹配稳定）
+    double lookahead_distance_{0.32}; // 前视距离（m）
     double control_rate_{20.0};       // Hz
-    double replan_period_{2.0};       // s
+    double replan_period_{1.0};       // s
     double goal_search_radius_{1.5};  // 目标吸附搜索半径（m）
     std::string map_topic_{"/map"};
     std::string goal_topic_{"/goal_pose"};
@@ -110,6 +111,15 @@ private:
     std::size_t path_index_{0};
     rclcpp::Time last_plan_time_;
     rclcpp::Time next_plan_attempt_;
+
+    // 受阻避让状态（防止在障碍前左右来回抖动）
+    bool was_blocked_{false};
+    int consecutive_blocks_{0};
+    rclcpp::Time blocked_since_;
+    rclcpp::Time avoid_until_;
+    rclcpp::Time last_block_time_;
+    double avoid_linear_{0.0};
+    double avoid_angular_{0.0};
 };
 
 #endif  // NAVIGATION_NAVIGATION_H

@@ -9,8 +9,15 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    IncludeLaunchDescription,
+    RegisterEventHandler,
+    TimerAction,
+)
 from launch.conditions import IfCondition
+from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
@@ -59,11 +66,31 @@ def generate_launch_description():
         parameters=[{
             'use_sim_time': use_sim_time,
             'mapping_backend': ParameterValue(mapping_backend, value_type=str),
+            # SLAM 模式降低速度，避免扫描匹配跟不上导致叠图
+            'max_linear_speed': ParameterValue(
+                PythonExpression([
+                    "0.15 if '", mapping_backend, "' == 'slam_toolbox' else 0.30"]),
+                value_type=float),
+            'max_angular_speed': ParameterValue(
+                PythonExpression([
+                    "0.50 if '", mapping_backend, "' == 'slam_toolbox' else 0.90"]),
+                value_type=float),
         }],
     )
 
-    # 可选：外部 slam_toolbox 节点（mapping_backend:=slam_toolbox 时启动）
-    slam_toolbox_launch = IncludeLaunchDescription(
+    # 可选：外部 slam_toolbox 节点（mapping_backend:=slam_toolbox 时启动）。
+    # 必须等第一帧 /scan 真正到达后再启动；与仿真同时启动时 slam_toolbox
+    # 会一直停在 0x0 地图（实测问题）。wait_for_scan 收到一帧后退出，
+    # 再用 OnProcessExit 触发 slam_toolbox。
+    wait_scan = ExecuteProcess(
+        cmd=['timeout', '60', 'python3',
+             os.path.join(bringup_dir, 'scripts', 'wait_for_scan.py')],
+        output='screen',
+        condition=IfCondition(PythonExpression(
+            ["'", mapping_backend, "' == 'slam_toolbox'"])),
+    )
+
+    slam_toolbox_include = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
                 get_package_share_directory('slam_toolbox'),
@@ -72,10 +99,29 @@ def generate_launch_description():
         launch_arguments={
             'use_sim_time': use_sim_time,
             'slam_params_file': slam_params_file,
-            'autostart': 'true',
+            # 关闭官方 launch 的一次性生命周期激活；高负载下它可能因服务
+            # 响应超时失败。下面用带重试的脚本完成 configure/activate。
+            'autostart': 'false',
         }.items(),
-        condition=IfCondition(PythonExpression(
-            ["'", mapping_backend, "' == 'slam_toolbox'"])),
+    )
+
+    activate_slam = ExecuteProcess(
+        cmd=['bash',
+             os.path.join(bringup_dir, 'scripts', 'activate_node.sh'),
+             '/slam_toolbox'],
+        output='screen',
+    )
+
+    slam_toolbox_launch = RegisterEventHandler(
+        OnProcessExit(
+            target_action=wait_scan,
+            on_exit=[
+                TimerAction(period=5.0, actions=[
+                    slam_toolbox_include,
+                    TimerAction(period=3.0, actions=[activate_slam]),
+                ]),
+            ],
+        ),
     )
 
     # 可选：前沿自动探索，通过 /goal_pose 驱动已有的 NavigationModule
@@ -103,7 +149,7 @@ def generate_launch_description():
         DeclareLaunchArgument('rviz', default_value='false'),
         DeclareLaunchArgument(
             'software_rendering', default_value='true',
-            description='强制 Mesa 软件渲染（虚拟机无 3D 加速时必需）'),
+            description='强制 Mesa 软件渲染；关闭 3D 加速时必需，开启 3D 后可设 false'),
         DeclareLaunchArgument(
             'explore', default_value='false',
             description='true 时启动 frontier_explorer 自动探索（不要同时遥控）'),
@@ -118,6 +164,7 @@ def generate_launch_description():
         DeclareLaunchArgument('y_pose', default_value='2.0'),
         DeclareLaunchArgument('yaw', default_value='0.0'),
         sim,
+        wait_scan,
         slam_toolbox_launch,
         robot_node,
         explorer_node,

@@ -52,13 +52,20 @@ def _launch_setup(context, *args, **kwargs):
         ) if path
     )
 
-    sdf_path = os.path.join(tb3_dir, 'models', f'turtlebot3_{model}', 'model.sdf')
+    # 优先使用本包 models/ 下的自定义模型（例如 12 m / 10 Hz 激光），
+    # 没有时回退到系统安装的 TurtleBot3 模型。
+    custom_sdf = os.path.join(
+        bringup_dir, 'models', f'turtlebot3_{model}', 'model.sdf')
+    default_sdf = os.path.join(
+        tb3_dir, 'models', f'turtlebot3_{model}', 'model.sdf')
+    sdf_path = custom_sdf if os.path.isfile(custom_sdf) else default_sdf
     urdf_path = os.path.join(tb3_dir, 'urdf', f'turtlebot3_{model}.urdf')
     if not os.path.isfile(sdf_path) or not os.path.isfile(urdf_path):
         raise RuntimeError(
             f'找不到 TurtleBot3 模型 "{model}" 的 SDF/URDF：{sdf_path} / {urdf_path}。'
             '可用型号：burger / waffle / waffle_pi'
         )
+    print(f'[sim.launch] robot model: {sdf_path}')
     with open(urdf_path, 'r') as urdf_file:
         robot_description = urdf_file.read()
 
@@ -69,9 +76,9 @@ def _launch_setup(context, *args, **kwargs):
         SetEnvironmentVariable('GZ_SIM_RESOURCE_PATH', resource_path),
     ]
 
-    # 虚拟机（VMware 等）没有可用的硬件 EGL/OpenGL 时，Ogre2 会初始化失败，
-    # 表现为 gpu_lidar 一直不出数据（日志里是 libEGL ... failed to create dri2 screen）。
-    # 强制 Mesa 软件渲染即可；真机有 GPU 时可用 software_rendering:=false 关掉。
+    # 关闭 VMware 3D 加速时，Gazebo 必须走 Mesa 软件渲染，否则 /scan 没数据
+    # （日志是 libEGL ... failed to create dri2 screen）。本机默认软件渲染；
+    # 如果以后重新开启 3D 加速，可以传 software_rendering:=false 走硬件渲染。
     if software_rendering:
         actions.append(SetEnvironmentVariable('LIBGL_ALWAYS_SOFTWARE', '1'))
 
@@ -179,7 +186,7 @@ def generate_launch_description():
             description='true 时同时启动 RViz2'),
         DeclareLaunchArgument(
             'software_rendering', default_value='true',
-            description='强制 Mesa 软件渲染（虚拟机无 3D 加速时必需；真机可设为 false）'),
+            description='强制 Mesa 软件渲染；关闭 3D 加速时必需，开启 3D 后可设 false'),
         DeclareLaunchArgument(
             'x_pose', default_value='-3.5',
             description='机器人初始 x 坐标（m）'),

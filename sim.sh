@@ -29,5 +29,13 @@ if ! ros2 pkg prefix my_robot_bringup >/dev/null 2>&1; then
   exit 1
 fi
 
+# 防止两个仿真实例同时跑：它们会同时发布 /map 和 map->odom，RViz 会叠图
+EXISTING=$(ps -eo pid,cmd --no-headers | grep -E 'my_robot_project/main_node|gz sim -r -s' | grep -v grep | awk '{print $1}' | tr '\n' ' ')
+if [ -n "${EXISTING// /}" ]; then
+  echo "检测到已有仿真在运行（PID: $EXISTING）。" >&2
+  echo "两个实例会同时发布 /map 和 map->odom，导致叠图；请先停止旧实例（Ctrl-C 或 kill 上面的 PID）再启动。" >&2
+  exit 1
+fi
+
 # 其余参数原样传给 launch
 exec ros2 launch my_robot_bringup bringup.launch.py "$@"

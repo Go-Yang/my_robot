@@ -122,7 +122,7 @@ ros2 launch my_robot_bringup sim.launch.py            # 只起仿真
 | `headless` | `false` | `true` 时只起 Gazebo server（无 GUI） |
 | `rviz` | `false` | 同时启动 RViz2 |
 | `x_pose` / `y_pose` / `yaw` | `-3.5` / `2.0` / `0.0` | 初始位姿，默认在 Room A |
-| `software_rendering` | `true` | 强制 Mesa 软件渲染；真机有 GPU 时设为 `false` |
+| `software_rendering` | `true` | 强制 Mesa 软件渲染；关闭 3D 加速时必需，开启 3D 后可设 `false` |
 | `explore` | `false` | 启动前沿自动探索 |
 | `mapping_backend` | `odom_grid` | 建图后端：`odom_grid` / `slam_toolbox` / `custom_slam` |
 | `slam_params_file` | 本包 `config/slam_toolbox.yaml` | slam_toolbox 参数文件 |
@@ -138,13 +138,17 @@ ros2 launch my_robot_bringup sim.launch.py            # 只起仿真
 
 | 话题 | 类型 | 频率（实测） |
 |---|---|---|
-| `/scan` | `sensor_msgs/msg/LaserScan` | ≈5 Hz，360 点，量程 0.12–3.5 m |
+| `/scan` | `sensor_msgs/msg/LaserScan` | ≈10 Hz，360 点，量程 0.12–12 m（自定义模型） |
 | `/odom` | `nav_msgs/msg/Odometry` | ≈50 Hz |
 | `/imu` | `sensor_msgs/msg/Imu` | ≈200 Hz |
 | `/clock`、`/tf`、`/joint_states` | — | 由 Gazebo 提供 |
 
 `/cmd_vel` 的类型是 **`geometry_msgs/msg/TwistStamped`**（Jazzy 版 TurtleBot3 的约定），
 后续控制/导航模块发布速度指令时注意不要用成 `Twist`。
+
+> 本项目的 `my_robot_bringup/models/turtlebot3_burger/` 里放了一份自定义模型，
+> 把激光改成 **12 m / 10 Hz**（原版 3.5 m / 5 Hz），用于改善长廊里的 SLAM 可观测性。
+> `sim.launch.py` 会优先使用本包 models/ 下的模型；没有时回退到系统安装的版本。
 
 ### 自检
 
@@ -157,12 +161,13 @@ ros2 run sensor_interface_lib sensor_monitor
 会打印每类数据的第一帧信息，以及每 5 秒的接收速率统计。
 `main_node` 里的 `SensorNode` 使用同一套订阅逻辑，只缓存最新一帧供建图/导航取用。
 
-### ⚠️ 虚拟机里的渲染问题
+### 虚拟机渲染说明
 
-VMware 等没有 3D 加速的环境下，Gazebo 的 Ogre2 渲染初始化会失败，表现为
-`/scan` 一直没有数据（server 日志里是 `libEGL warning: egl: failed to create dri2 screen`）。
-`sim.launch.py` 默认设置 `LIBGL_ALWAYS_SOFTWARE=1` 走 Mesa 软件渲染来规避；
-不想要这个行为时传 `software_rendering:=false`。
+开发机（VMware，8 vCPU / 16 GB）已关闭 VMware 3D 加速，默认走 **Mesa llvmpipe
+软件渲染**（`software_rendering:=true`）。如果开着 3D 加速却用软件渲染会浪费性能，
+此时可以传 `software_rendering:=false`；反过来，没有 3D 加速却走硬件渲染时
+Gazebo 的 EGL 会初始化失败，表现为 `/scan` 一直没数据（日志里是
+`libEGL warning: egl: failed to create dri2 screen`）。
 
 ## 建图（第二阶段）：可插拔后端
 
@@ -213,10 +218,22 @@ VMware 等没有 3D 加速的环境下，Gazebo 的 Ogre2 渲染初始化会失�
 - 输出 `/map` 和动态 `map -> odom`，含扫描匹配、回环检测、位姿图优化
 - 地图会裁剪到已知区域；探索器把“栅格越界”也当作未知边界
 - `mapping_lib` 的 `SlamToolboxBackend` 只订阅 `/map` 缓存，对外接口与 odom_grid 一致
+- 启动顺序：先等第一帧 `/scan`，再由带重试的脚本 configure/activate；高负载下
+  官方 launch 的一次性生命周期激活可能超时，节点会停在 inactive
+- `minimum_travel_distance` / `minimum_travel_heading` 设为 `0`：机器人静止时也处理扫描。
+  这两个值若大于 0，启动阶段机器人没动，地图会一直保持 0×0
+- 自动降速：`mapping_backend:=slam_toolbox` 时 bringup 会把导航速度限制为
+  **0.15 m/s / 0.5 rad/s**，减少长廊等弱约束环境里的匹配漂移
 
 > slam_toolbox 刚启动时地图来自少量扫描，射线之间会有细小的未知缝隙。
 > 导航允许未知格通行（`unknown_penalty` 加代价），配合激光安全距离，
 > 机器人可以先动起来把地图补全。
+
+> **叠图/墙体双线排查**：最常见原因是同时跑了两个仿真实例——两个 `/map`
+> 和两个 `map -> odom` 会一起发布。`sim.sh` 启动前会检查并拒绝重复启动。
+> 其次是 SLAM 扫描匹配失败：快速原地转向时相邻两帧转过的角度太大，
+> 已把 `max_angular_speed` 降到 0.9 rad/s。仍出现双线时用 `headless:=true`
+> 提高实时因子，或临时降低 `max_linear_speed` / `max_angular_speed`。
 
 ### custom_slam（自研 SLAM 占位）
 
@@ -233,6 +250,19 @@ ros2 run sensor_interface_lib sensor_monitor    # 另开终端看传感器
 
 RViz 的 Map display 已默认打开，Fixed Frame 是 `map`。
 
+### 保存地图
+
+地图只存在于 `/map` 话题里，**仿真退出后就没有了**，需要保存成文件：
+
+```bash
+./save_map.sh                    # maps/room_map.pgm + room_map.yaml
+./save_map.sh maps/house_2       # 自定义输出前缀
+```
+
+`save_map.sh` 必须在仿真/建图运行时执行（脚本会检查 `/map` 话题）。
+输出是 nav2 标准的 PGM + YAML，后续可以用 `nav2_map_server` 的 map_server 加载。
+地图坐标系是 `map`。
+
 ### 自动探索建图
 
 不想手动遥控时，加 `explore:=true`：
@@ -246,20 +276,24 @@ RViz 的 Map display 已默认打开，Fixed Frame 是 `map`。
 
 1. 在 `/map` 中找“本身空闲、8 邻域有未知格或越界”的前沿，按 8 邻接聚类；
 2. 过滤小簇、离墙太近（`goal_clearance`）以及黑名单内的格子；
-3. 优先选离机器人至少 `min_target_distance` 的边界格，发 `/goal_pose`；
-4. 到达后等 1 s 让地图更新；15 s 内没有靠近目标（或超过 180 s 总时限）则拉黑该点；
+3. 优先选离机器人至少 `min_target_distance`（默认 2.5 m）的边界格，发 `/goal_pose`；
+4. 到达后等 0.5 s 让地图更新；8 s 内没有靠近目标 0.15 m（或超过 180 s 总时限）则拉黑该点；
 5. 没有可用边界时打印“探索完成”并停止。
 
 RViz 中 `/frontiers` 显示绿色候选边界点，红色球是当前探索目标，`/plan` 是导航路径。
-节点参数：`min_frontier_size`、`min_known_cells`、`min_target_distance`、`goal_clearance`、
+节点参数：`min_frontier_size`、`min_known_cells`、`min_target_distance`（默认 2.5 m）、
+`heading_weight`（默认 0.6，越大会更倾向于保持当前朝向）、`goal_clearance`、
 `goal_reached_distance`、`goal_timeout`、`progress_timeout`、`cooldown`、`blacklist_radius`、
 `explore_period`。
 
 实测（odom_grid）：从 Room A 出生点出发，自动探索四个房间 + 走廊约 8 分钟
-（VMware 软渲染）后打印“探索完成”；最终地图约 3 万空闲栅格、2.4 千占据栅格，
-全程 odom 与 Gazebo 真值漂移约 3 cm。
+（早期 VMware 软渲染环境）后打印“探索完成”；最终地图约 3 万空闲栅格、2.4 千占据栅格，
+全程 odom 与 Gazebo 真值漂移约 3 cm。把 VM 调到 8 vCPU 后，软渲染下也能接近实时。
 
 > 自动探索和键盘遥控都会发 `/cmd_vel`，不要同时使用。
+>
+> Gazebo GUI 和 RViz 仍会占用一部分渲染资源。追求建图速度时用 `headless:=true`，
+> 需要看地图时再加 `rviz:=true`。
 
 当前限制：odom_grid 不做扫描匹配/回环（仿真里程计足够准）；TurtleBot3 激光相对底盘
 约 2 cm 的平移未补偿；slam_toolbox 后端在狭窄走廊里的自动探索目标仍可能超时，需要
@@ -296,13 +330,14 @@ ros2 topic pub --once /goal_pose geometry_msgs/msg/PoseStamped \
 |---|---|---|
 | `robot_radius` | `0.25` | 障碍膨胀半径（m） |
 | `start_clear_radius` | `0.30` | 规划时放行机器人附近这段膨胀区（脱困） |
-| `safety_distance` | `0.30` | 激光前向安全距离，太近只转向不前进 |
+| `safety_distance` | `0.40` | 激光前向安全距离，太近只转向不前进 |
+| `slow_distance` | `1.00` | 前方障碍小于此距离时线性减速（m） |
 | `unknown_penalty` | `2.0` | 未知格额外代价倍数（0 表示与空闲同价） |
 | `goal_tolerance` | `0.15` | 到达判定距离（m） |
-| `max_linear_speed` / `max_angular_speed` | `0.15` / `0.8` | 速度上限（m/s、rad/s） |
-| `lookahead_distance` | `0.40` | 前视距离（m） |
+| `max_linear_speed` / `max_angular_speed` | `0.30` / `0.9` | 速度上限（m/s、rad/s；0.30 超过 burger 硬件上限，仅仿真用，真机改回 0.22） |
+| `lookahead_distance` | `0.32` | 前视距离（m） |
 | `control_rate` | `20.0` | 控制频率（Hz） |
-| `replan_period` | `2.0` | 重规划周期（s） |
+| `replan_period` | `1.0` | 重规划周期（s） |
 | `goal_search_radius` | `1.5` | 目标吸附搜索半径（m） |
 | `nav_map_topic` | `/map` | 输入地图 |
 | `goal_topic` / `plan_topic` / `cmd_vel_topic` | `/goal_pose` / `/plan` / `/cmd_vel` | 接口话题 |
@@ -395,24 +430,25 @@ done
 
 ### 实测结论
 
-本项目在 Ubuntu 24.04 + Jazzy + Gazebo Sim 8.11.0（VMware 软渲染）下实测通过：
+本项目在 Ubuntu 24.04 + Jazzy + Gazebo Sim 8.11.0（VMware，早期软渲染环境）下实测通过：
 
 - **nav2 全栈**：`NavigateToPose` 从 `(-1.95, -0.51)` 导航至 `(0.5, -0.5)`，
   17.2 秒到达，`error_code: 0`，0 次恢复行为。
 - **Cartographer**：`map→odom` 以约 20 Hz 发布，地图正常增量构建
   （123×115 @ 0.05 m，14145 格中约 5900 格为已知占据/空闲）。
 
-> 软渲染下 rviz 会刷 `Message Filter dropping message ... queue is full`
-> 和 GLSL 链接警告（`active samplers with a different type refer to the same texture image unit`），
-> 都是 llvmpipe 性能不足导致的显示层问题，不影响导航与建图本身。
+> 软渲染下 rviz 可能刷 `Message Filter dropping message ... queue is full`
+> 和 GLSL 链接警告，都是 llvmpipe 性能不足导致的显示层问题，不影响导航与建图。
+> 若出现较多，用 `headless:=true` 降低负载，或把 RViz 的显示订阅改为 Best Effort。
 
 ## 注意事项
 
 - **`gz` 命令依赖 ROS 环境**：Gazebo 是作为 `ros-jazzy-ros-gz` 的 vendor 包装在
   `/opt/ros/jazzy/opt/` 下的，不在系统 PATH 中，需先 `source /opt/ros/jazzy/setup.bash`。
   **不要**再从 OSRF 源安装独立的 `gz-harmonic`，会与 vendored 版本冲突。
-- **软件渲染**：若在虚拟机（如 VMware）中运行且无 3D 加速，Gazebo 会回退到 Mesa 软件渲染，
-  能跑但帧率低，开相机/雷达传感器时更明显。
+- **渲染**：当前 VM 已关闭 3D 加速，默认强制 Mesa 软件渲染（`software_rendering:=true`）。
+  若重新开启 VMware 3D 加速，可传 `software_rendering:=false` 使用硬件渲染；
+  两种模式都不要混用，否则 `/scan` 可能没有数据。
 - 退出仿真后若有残留的 `gz sim` 进程，**不要**用 `pkill -f 'gz sim'` ——
   这个模式会匹配到执行它的那条 shell 命令本身，把自己的终端一起杀掉。
   先列 PID 再按 PID 杀：

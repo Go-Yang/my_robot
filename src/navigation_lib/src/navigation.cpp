@@ -37,6 +37,8 @@ void NavigationModule::init(
         node_->declare_parameter<double>("start_clear_radius", start_clear_radius_);
     safety_distance_ =
         node_->declare_parameter<double>("safety_distance", safety_distance_);
+    slow_distance_ =
+        node_->declare_parameter<double>("slow_distance", slow_distance_);
     unknown_penalty_ =
         node_->declare_parameter<double>("unknown_penalty", unknown_penalty_);
     goal_tolerance_ = node_->declare_parameter<double>("goal_tolerance", goal_tolerance_);
@@ -80,6 +82,9 @@ void NavigationModule::init(
 
     last_plan_time_ = node_->now();
     next_plan_attempt_ = last_plan_time_;
+    blocked_since_ = last_plan_time_;
+    avoid_until_ = last_plan_time_;
+    last_block_time_ = last_plan_time_;
 
     RCLCPP_INFO(node_->get_logger(),
                 "NavigationModule 已启动：goal=%s，plan=%s，cmd_vel=%s，"
@@ -232,12 +237,14 @@ void NavigationModule::controlCallback() {
     double angular = std::clamp(
         1.5 * heading_error, -max_angular_speed_, max_angular_speed_);
 
-    // 激光前向安全保护：贴近障碍时只允许原地转向，避免顶着墙走。
-    // 顶着墙会轮子打滑，让仿真里程计快速漂移，进而毁掉地图。
+    // 激光安全保护：前方减速/停车转向，转弯时也检查转弯侧。
+    // 顶着墙走会让轮子打滑，仿真里程计快速漂移，进而毁掉地图。
     auto scan = sensor_->getLatestScan();
     if (scan && !scan->ranges.empty()) {
-        constexpr double kFrontHalfAngle = 0.40;  // rad
+        constexpr double kFrontHalfAngle = 0.50;  // ±0.5 rad 视为前方
+        constexpr double kRearHalfAngle = 2.50;   // |angle| > 2.5 rad 视为后方
         double front_min = std::numeric_limits<double>::infinity();
+        double rear_min = std::numeric_limits<double>::infinity();
         double left_min = std::numeric_limits<double>::infinity();
         double right_min = std::numeric_limits<double>::infinity();
 
@@ -252,20 +259,76 @@ void NavigationModule::controlCallback() {
 
             if (std::abs(angle) <= kFrontHalfAngle) {
                 front_min = std::min(front_min, range);
+            } else if (std::abs(angle) >= kRearHalfAngle) {
+                rear_min = std::min(rear_min, range);
             }
-            if (angle > 0.2 && angle < 1.2) {
+            if (angle > 0.25 && angle < 1.5) {
                 left_min = std::min(left_min, range);
             }
-            if (angle < -0.2 && angle > -1.2) {
+            if (angle < -0.25 && angle > -1.5) {
                 right_min = std::min(right_min, range);
             }
         }
 
         if (front_min < safety_distance_) {
-            linear = 0.0;
-            angular = (left_min >= right_min ? 1.0 : -1.0) * max_angular_speed_;
-            RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
-                                 "前方 %.2f m 有障碍，暂停前进并转向", front_min);
+            // 受阻：第一次触发时记录次数；一直受阻期间锁定一个转向方向，
+            // 避免左右两侧读数抖动导致原地来回摆。
+            if (!was_blocked_) {
+                was_blocked_ = true;
+                blocked_since_ = now;
+                ++consecutive_blocks_;
+            }
+            last_block_time_ = now;
+
+            if (now >= avoid_until_) {
+                const double dir = (left_min >= right_min ? 1.0 : -1.0);
+                if ((now - blocked_since_).seconds() > 2.0 && rear_min > 0.30) {
+                    avoid_linear_ = -0.10;  // 持续受阻：倒车脱困
+                    avoid_angular_ = dir * max_angular_speed_;
+                    avoid_until_ = now + rclcpp::Duration::from_seconds(1.0);
+                    RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
+                                         "前方 %.2f m 受阻，倒车脱困", front_min);
+                } else {
+                    avoid_linear_ = 0.0;
+                    avoid_angular_ = dir * max_angular_speed_;
+                    avoid_until_ = now + rclcpp::Duration::from_seconds(1.2);
+                    RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
+                                         "前方 %.2f m 有障碍，锁定方向避让", front_min);
+                }
+            }
+
+            linear = avoid_linear_;
+            angular = avoid_angular_;
+
+            if (consecutive_blocks_ >= 3) {
+                RCLCPP_WARN(node_->get_logger(),
+                            "连续受阻 %d 次，放弃当前目标", consecutive_blocks_);
+                have_goal_ = false;
+                path_.clear();
+                consecutive_blocks_ = 0;
+                was_blocked_ = false;
+                publishStop();
+                return;
+            }
+        } else {
+            was_blocked_ = false;
+            if ((now - last_block_time_).seconds() > 5.0) {
+                consecutive_blocks_ = 0;
+            }
+
+            // 进入减速区：随距离线性降速，避免高速冲到墙前
+            if (front_min < slow_distance_) {
+                const double scale = std::clamp(
+                    (front_min - 0.15) / std::max(0.01, slow_distance_ - 0.15),
+                    0.0, 1.0);
+                linear *= std::max(0.2, scale);
+            }
+
+            // 转弯侧贴墙时限制角速度，避免车尾扫墙
+            const double turn_side_min = angular > 0.0 ? left_min : right_min;
+            if (turn_side_min < safety_distance_ * 0.8) {
+                angular *= 0.35;
+            }
         }
     }
 
