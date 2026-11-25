@@ -136,7 +136,8 @@ ros2 launch my_robot_bringup sim.launch.py            # 只起 TurtleBot3 仿真
 | `headless` | `false` | `true` 时只起 Gazebo server（无 GUI） |
 | `rviz` | `false` | 同时启动 RViz2 |
 | `x_pose` / `y_pose` / `yaw` | `-3.5` / `2.0` / `0.0` | 初始位姿，默认在 Room A |
-| `software_rendering` | `true` | 只对 TurtleBot3 生效；TB4 必须交给 Mesa 自动选择（见下文） |
+| `software_rendering` | `true` | 只对 TurtleBot3 生效；有 3D 加速时设 `false` |
+| `gui_software_rendering` | `true` | 只对 TB4 生效：给 Gazebo GUI/RViz 强制软件渲染；WSL2/有 3D 时设 `false` |
 | `explore` | `false` | 启动前沿自动探索 |
 | `mapping_backend` | `odom_grid` | 建图后端：`odom_grid` / `slam_toolbox` / `custom_slam` |
 | `slam_params_file` | 本包 `config/slam_toolbox.yaml` | slam_toolbox 参数文件 |
@@ -206,12 +207,16 @@ ros2 run sensor_interface_lib sensor_monitor
 **llvmpipe 软件渲染**。
 
 - **TB4（默认）**：TB4 已经不用 gz 的渲染类传感器（激光改用 CPU 射线投射），
-  所以 server 端不再有 GPU 雷达段错误问题。`LIBGL_ALWAYS_SOFTWARE=1` 只加在
-  **gz GUI 和 RViz** 两个显示进程上（`additional_env`），否则窗口会闪一下变黑。
+  所以 server 端不需要软件渲染。`gui_software_rendering` 默认 `true`，只给
+  **gz GUI 和 RViz** 设置 `LIBGL_ALWAYS_SOFTWARE=1`；在 WSL2 或开了 3D 加速的
+  机器上传 `gui_software_rendering:=false`，让它们走硬件 OpenGL。
 - **TurtleBot3（回退）**：`sim.launch.py` 仍保留 `software_rendering` 参数，
-  默认 `true`，对整条 launch 生效；实测 `false` 也能正常出 `/scan`。
+  默认 `true`，对整条 launch 生效；有 3D 时设 `false`。
 - 如果 GUI + RViz + 自动探索一起跑太卡（llvmpipe 下两个渲染窗口很吃 CPU），
   建议用 `headless:=true rviz:=true`，只保留 RViz 看地图。
+- **WSL2（RTX 4070 Ti Super）**：先 `glxinfo -B` 确认是 `D3D12` 而不是
+  `llvmpipe`，然后加 `gui_software_rendering:=false`（TB3 再加
+  `software_rendering:=false`）。
 
 ## 建图（第二阶段）：可插拔后端
 
@@ -506,9 +511,9 @@ done
 - **`gz` 命令依赖 ROS 环境**：Gazebo 是作为 `ros-jazzy-ros-gz` 的 vendor 包装在
   `/opt/ros/jazzy/opt/` 下的，不在系统 PATH 中，需先 `source /opt/ros/jazzy/setup.bash`。
   **不要**再从 OSRF 源安装独立的 `gz-harmonic`，会与 vendored 版本冲突。
-- **渲染**：当前 VM 已关闭 3D 加速，默认强制 Mesa 软件渲染（`software_rendering:=true`）。
-  若重新开启 VMware 3D 加速，可传 `software_rendering:=false` 使用硬件渲染；
-  两种模式都不要混用，否则 `/scan` 可能没有数据。
+- **渲染**：无 3D 加速时用 `software_rendering:=true`（TB3）/
+  `gui_software_rendering:=true`（TB4）；WSL2 或开了 3D 加速的机器上分别设
+  `false` 使用硬件渲染。
 - 退出仿真后若有残留的 `gz sim` 进程，**不要**用 `pkill -f 'gz sim'` ——
   这个模式会匹配到执行它的那条 shell 命令本身，把自己的终端一起杀掉。
   先列 PID 再按 PID 杀：

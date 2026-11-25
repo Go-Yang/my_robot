@@ -10,6 +10,7 @@
 #   ./sim.sh mapping_backend:=slam_toolbox rviz:=true   # 用 slam_toolbox 建图（默认 odom_grid）
 #   ./sim.sh tb4_model:=standard      # TB4 换 Standard 型号
 #   ./sim.sh robot:=turtlebot3 model:=waffle            # 回退到 TurtleBot3
+#   ./sim.sh gui_software_rendering:=false              # WSL2/有 3D 时 GUI/RViz 走硬件
 #   ./sim.sh --show-args              # 只查看可用参数
 
 # 工作空间根目录（取脚本所在目录，项目放在任意路径都不用改）

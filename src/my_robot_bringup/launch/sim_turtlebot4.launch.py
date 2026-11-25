@@ -68,6 +68,8 @@ def _launch_setup(context, *args, **kwargs):
     model = LaunchConfiguration('tb4_model').perform(context)
     headless = _as_bool(LaunchConfiguration('headless').perform(context))
     start_rviz = _as_bool(LaunchConfiguration('rviz').perform(context))
+    gui_software = _as_bool(
+        LaunchConfiguration('gui_software_rendering').perform(context))
     x_pose = LaunchConfiguration('x_pose').perform(context)
     y_pose = LaunchConfiguration('y_pose').perform(context)
     yaw = LaunchConfiguration('yaw').perform(context)
@@ -114,10 +116,11 @@ def _launch_setup(context, *args, **kwargs):
     print(f'[sim_turtlebot4.launch] model={model}, '
           f'scan=world_lidar(CPU raycast), imu={imu_gz_topic}')
 
-    # 注意：不要设置 LIBGL_ALWAYS_SOFTWARE=1。没有 3D 加速时 Mesa 本来就会
-    # 选 llvmpipe；强行设置会让 gz 的 EGL 初始化走另一条路径，TB4 的 gpu_lidar
-    # 在创建渲染场景时段错误（libgz-rendering-ogre2 / Ogre::Node::getParent）。
-    # 实测 TB4 直接交给 Mesa 选择即可正常出 /scan。
+    # 只给 GUI / RViz 这两个显示进程设置软件渲染。无 3D 加速的 VM 必须设，
+    # 否则窗口会闪一下变黑；WSL2/有 3D 的机器传 gui_software_rendering:=false，
+    # 让它们走硬件 OpenGL。
+    display_env = {'LIBGL_ALWAYS_SOFTWARE': '1'} if gui_software else {}
+
     actions = [
         SetEnvironmentVariable('GZ_SIM_RESOURCE_PATH', resource_path),
     ]
@@ -241,17 +244,13 @@ def _launch_setup(context, *args, **kwargs):
 
     ]
 
-    # 只给 GUI / RViz 这两个**显示进程**强制 Mesa 软件渲染。
-    # gz server（传感器渲染）不能带这个变量：实测带 LIBGL_ALWAYS_SOFTWARE=1
-    # 时 GPU 雷达创建渲染场景会段错误；但 GUI 不带又会在没有 3D 加速的
-    # VMware 上闪一下变黑。所以按进程分开设置。
     if not headless:
         actions.append(
             ExecuteProcess(
                 cmd=['gz', 'sim', '-g', '-v', '2'],
                 name='gz_client',
                 output='screen',
-                additional_env={'LIBGL_ALWAYS_SOFTWARE': '1'},
+                additional_env=display_env,
             )
         )
 
@@ -265,7 +264,7 @@ def _launch_setup(context, *args, **kwargs):
                              '--ros-args', '-p', 'use_sim_time:=true'],
                         name='rviz2',
                         output='screen',
-                        additional_env={'LIBGL_ALWAYS_SOFTWARE': '1'},
+                        additional_env=display_env,
                     ),
                 ],
             )
@@ -295,6 +294,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'rviz', default_value='false',
             description='true 时同时启动 RViz2'),
+        DeclareLaunchArgument(
+            'gui_software_rendering', default_value='true',
+            description='给 Gazebo GUI/RViz 强制 Mesa 软件渲染；'
+                        'WSL2 或有 3D 加速时设 false'),
         DeclareLaunchArgument(
             'x_pose', default_value='-3.5',
             description='机器人初始 x 坐标（m）'),

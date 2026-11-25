@@ -38,6 +38,7 @@ def generate_launch_description():
     headless = LaunchConfiguration('headless')
     rviz = LaunchConfiguration('rviz')
     software_rendering = LaunchConfiguration('software_rendering')
+    gui_software_rendering = LaunchConfiguration('gui_software_rendering')
     explore = LaunchConfiguration('explore')
     mapping_backend = LaunchConfiguration('mapping_backend')
     slam_params_file = LaunchConfiguration('slam_params_file')
@@ -53,6 +54,7 @@ def generate_launch_description():
             'world': world,
             'headless': headless,
             'rviz': rviz,
+            'gui_software_rendering': gui_software_rendering,
             'x_pose': x_pose,
             'y_pose': y_pose,
             'yaw': yaw,
@@ -192,7 +194,11 @@ def generate_launch_description():
         DeclareLaunchArgument('rviz', default_value='false'),
         DeclareLaunchArgument(
             'software_rendering', default_value='true',
-            description='强制 Mesa 软件渲染；关闭 3D 加速时必需，开启 3D 后可设 false'),
+            description='TurtleBot3 路径：强制 Mesa 软件渲染；有 3D 加速时设 false'),
+        DeclareLaunchArgument(
+            'gui_software_rendering', default_value='true',
+            description='TB4 路径：给 Gazebo GUI/RViz 强制软件渲染；'
+                        'WSL2 或有 3D 加速时设 false'),
         DeclareLaunchArgument(
             'explore', default_value='false',
             description='true 时启动 frontier_explorer 自动探索（不要同时遥控）'),

@@ -222,7 +222,8 @@
 | `model` | 环境变量 `TURTLEBOT3_MODEL`，否则 `burger` | TurtleBot3 型号（仅回退时生效） |
 | `headless` | `false` | 只起 Gazebo server |
 | `rviz` | `false` | 启动 RViz2 |
-| `software_rendering` | `true` | 只对 TB3 生效；TB4 不要开（会段错误） |
+| `software_rendering` | `true` | 只对 TB3 生效；有 3D 加速时设 `false` |
+| `gui_software_rendering` | `true` | 只对 TB4 的 GUI/RViz 生效；WSL2 或有 3D 时设 `false` |
 | `explore` | `false` | 启动前沿自动探索 |
 | `mapping_backend` | `odom_grid` | 建图后端 |
 | `slam_params_file` | `config/slam_toolbox.yaml` | slam 参数文件 |
