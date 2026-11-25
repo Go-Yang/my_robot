@@ -1,6 +1,8 @@
 #include "sensor_interface/sensor_node.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <utility>
@@ -45,6 +47,20 @@ void SensorNode::laserCallback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
                     "量程 [%.2f, %.2f] m，frame_id=%s",
                     msg->ranges.size(), msg->angle_min, msg->angle_max,
                     msg->range_min, msg->range_max, msg->header.frame_id.c_str());
+    }
+
+    // 软件渲染下 gz 的 GPU 雷达偶尔会发来全 inf 或全 range_min 的坏帧。
+    // 这类帧没有有效回波，直接丢弃，避免建图把整片区域误标成空闲。
+    const auto valid_count = std::count_if(
+        msg->ranges.begin(), msg->ranges.end(), [&msg](float r) {
+            return std::isfinite(r) && r > msg->range_min;
+        });
+    if (valid_count == 0) {
+        const std::size_t invalid =
+            invalid_scan_count_.fetch_add(1, std::memory_order_relaxed) + 1;
+        RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
+                             "丢弃无有效回波的 LaserScan（累计 %zu 帧）", invalid);
+        return;
     }
 
     std::lock_guard<std::mutex> lock(data_mutex_);

@@ -2,6 +2,10 @@
 
 基于 ROS 2 的机器人项目工作空间（colcon workspace）。
 
+完整的包分层、运行时节点、话题/TF、建图后端、启动流程和并发模型见
+**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**；所有可调参数见
+**[docs/PARAMETERS.md](docs/PARAMETERS.md)**。
+
 ## 环境
 
 本项目当前适配的实测环境：
@@ -11,10 +15,13 @@
 | 系统 | Ubuntu 24.04 (noble) |
 | ROS 2 | **Jazzy**（`/opt/ros/jazzy`） |
 | Gazebo | Gazebo Sim 8.11.0（Harmonic），随 `ros-jazzy-ros-gz` 的 vendor 包提供 |
-| 仿真机器人 | TurtleBot3（`ros-jazzy-turtlebot3*`） |
+| 仿真机器人 | **TurtleBot 4 Lite**（`ros-jazzy-turtlebot4-*`，默认）；TurtleBot3（`robot:=turtlebot3` 回退） |
 
 > Ubuntu 24.04 上 **不支持** ROS 2 Humble，也装不了 Gazebo Classic（gazebo11 已 EOL）。
 > 仿真用的是新一代 Gazebo Sim（`gz sim`），走 `ros_gz` 桥接，不是 Classic。
+>
+> TB4 仿真是默认机器人，需要先装：
+> `sudo apt install ros-jazzy-turtlebot4-simulator`（53 个包，下载约 14 MB）。
 
 ## 目录结构
 
@@ -44,10 +51,13 @@ my_robot/
     │
     ├── my_robot_bringup/         # 仿真环境、机器人、launch、rviz、桥接
     │   ├── worlds/room_world.world       # 四室 + 走廊测试环境
-    │   ├── models/                       # 预留自定义模型
+    │   ├── models/                       # TurtleBot3 自定义模型（回退路径）
+    │   ├── urdf/                         # TurtleBot4 模型副本（去掉 OAK-D 等）
+    │   ├── launch/sim_turtlebot4.launch.py  # Gazebo + TB4 + 官方桥接（默认）
     │   ├── launch/sim.launch.py          # Gazebo + TurtleBot3 + ros_gz 桥接
-    │   ├── launch/bringup.launch.py      # 仿真 + 主节点
-    │   ├── config/bridge.yaml
+    │   ├── launch/bringup.launch.py      # 仿真 + 主节点（robot 参数选择机器人）
+    │   ├── scripts/world_lidar.py        # CPU 射线投射生成 /scan（TB4）
+    │   ├── config/bridge.yaml            # TurtleBot3 的桥接配置
     │   └── rviz/my_robot.rviz
     │
     └── my_robot_project/         # 顶层调度，链接上面各库
@@ -97,10 +107,11 @@ ros2 run my_robot_project main_node
 
 ```bash
 ./build.sh
-./sim.sh                          # 自动 source 环境 + Gazebo GUI + 主节点
+./sim.sh                          # 默认 TB4 Lite + Gazebo GUI + 主节点
 ./sim.sh headless:=true
 ./sim.sh rviz:=true
 ./sim.sh --show-args              # 查看全部 launch 参数
+./sim.sh robot:=turtlebot3        # 回退到 TurtleBot3（默认 burger）
 ```
 
 `sim.sh` 内部会先 source ROS 与 `install/setup.bash`，无需手动处理环境。
@@ -109,20 +120,23 @@ ros2 run my_robot_project main_node
 ```bash
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
-ros2 launch my_robot_bringup bringup.launch.py        # 仿真 + 主节点
-ros2 launch my_robot_bringup sim.launch.py            # 只起仿真
+ros2 launch my_robot_bringup bringup.launch.py        # 仿真 + 主节点（默认 TB4 Lite）
+ros2 launch my_robot_bringup sim_turtlebot4.launch.py # 只起 TB4 仿真
+ros2 launch my_robot_bringup sim.launch.py            # 只起 TurtleBot3 仿真（回退）
 ```
 
 常用 launch 参数：
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
+| `robot` | `turtlebot4_lite` | 仿真机器人：`turtlebot4_lite` / `turtlebot3` |
+| `tb4_model` | `lite` | TB4 型号：`lite` / `standard` |
 | `world` | 本包 `worlds/room_world.world` | world 文件绝对路径 |
-| `model` | 环境变量 `TURTLEBOT3_MODEL`，未设置时为 `burger` | `burger` / `waffle` / `waffle_pi` |
+| `model` | 环境变量 `TURTLEBOT3_MODEL`，未设置时为 `burger` | TurtleBot3 型号（仅 `robot:=turtlebot3` 时生效） |
 | `headless` | `false` | `true` 时只起 Gazebo server（无 GUI） |
 | `rviz` | `false` | 同时启动 RViz2 |
 | `x_pose` / `y_pose` / `yaw` | `-3.5` / `2.0` / `0.0` | 初始位姿，默认在 Room A |
-| `software_rendering` | `true` | 强制 Mesa 软件渲染；关闭 3D 加速时必需，开启 3D 后可设 `false` |
+| `software_rendering` | `true` | 只对 TurtleBot3 生效；TB4 必须交给 Mesa 自动选择（见下文） |
 | `explore` | `false` | 启动前沿自动探索 |
 | `mapping_backend` | `odom_grid` | 建图后端：`odom_grid` / `slam_toolbox` / `custom_slam` |
 | `slam_params_file` | 本包 `config/slam_toolbox.yaml` | slam_toolbox 参数文件 |
@@ -134,19 +148,44 @@ ros2 launch my_robot_bringup sim.launch.py            # 只起仿真
 
 ### 传感器话题
 
-仿真启动后由 `ros_gz_bridge` 提供：
+默认 TB4 Lite 仿真下（实测）：
 
-| 话题 | 类型 | 频率（实测） |
-|---|---|---|
-| `/scan` | `sensor_msgs/msg/LaserScan` | ≈10 Hz，360 点，量程 0.12–12 m（自定义模型） |
-| `/odom` | `nav_msgs/msg/Odometry` | ≈50 Hz |
-| `/imu` | `sensor_msgs/msg/Imu` | ≈200 Hz |
-| `/clock`、`/tf`、`/joint_states` | — | 由 Gazebo 提供 |
+| 话题 | 类型 | 频率（实测） | 说明 |
+|---|---|---|---|
+| `/scan` | `sensor_msgs/msg/LaserScan` | ≈10 Hz，720 点（0.5°） | 由 `world_lidar` 用 world 几何 + 真值位姿做 CPU 射线投射；量程 0.164–12 m，frame `rplidar_link` |
+| `/odom` | `nav_msgs/msg/Odometry` | ≈62 Hz | `diff_drive_controller` 发布，同时广播 `odom→base_link` |
+| `/imu` | `sensor_msgs/msg/Imu` | ≈62 Hz | Create3 IMU，bridge 里补的一条 gz 桥 |
+| `/joint_states`、`/tf` | — | 运行中 | 由 `joint_state_broadcaster` / `diff_drive_controller` 直接发布 |
+| `/clock` | `rosgraph_msgs/msg/Clock` | — | 由 Gazebo 提供 |
 
-`/cmd_vel` 的类型是 **`geometry_msgs/msg/TwistStamped`**（Jazzy 版 TurtleBot3 的约定），
-后续控制/导航模块发布速度指令时注意不要用成 `Twist`。
+`/cmd_vel` 的类型是 **`geometry_msgs/msg/TwistStamped`**（TB4 和 Jazzy 版 TB3 都是），
+`navigation_lib` 的发布类型与之匹配。
 
-> 本项目的 `my_robot_bringup/models/turtlebot3_burger/` 里放了一份自定义模型，
+TB4 模型的裁剪与仿真适配都集中在
+[scripts/tb4_urdf.py](src/my_robot_bringup/scripts/tb4_urdf.py) 和
+[urdf/](src/my_robot_bringup/urdf/) 里，主要做了：
+
+- **激光不再用 gz 的 `gpu_lidar`**：llvmpipe 下它会连续几十秒只输出 `inf`，
+  导航只能停车。现在由
+  [scripts/world_lidar.py](src/my_robot_bringup/scripts/world_lidar.py)
+  解析 world 里的静态 box 墙，并结合 Gazebo 真值位姿 `/sim_ground_truth_pose`
+  做 CPU 2D 射线投射，稳定发布 `/scan`（10 Hz、720 点/0.5°、0.164–12 m、
+  frame `rplidar_link`）。
+  - 这是仿真专用做法：只对当前这个由 box 墙组成的 world 有效；
+  - 合成扫描仍按机器人位姿输出角度/距离，建图和导航照常使用轮式 odom。
+- 去掉 OAK-D 相机和相机支架网格（相机不用，link/TF 保留）。
+- 去掉所有 `gpu_lidar`（RPLIDAR + 悬崖 + 红外）和 Create3 自带的模型级
+  Sensors 插件（它和 world 的 Sensors 系统重复）。
+- `odom_grid` 建图**不再把 inf 射线标成最大量程的空闲区域**（TB3 同样生效），
+  导航在激光缺失/过期时停车、缺失扇面按受阻处理。这样即使以后换回
+  gz 雷达，坏帧也不会擦墙或让机器人盲开。
+- `SensorNode` 也会丢弃全 inf / 全 range_min 的坏帧（双保险）。
+
+> 想在有 3D 加速的机器上重新用 gz 原版雷达：把 `tb4_urdf.py` 里的
+> `KEEP_LIDARS` 改回 `{'rplidar'}`，在 launch 里恢复 `/scan_raw` 桥接和
+> `scripts/scan_filter.py` 即可；这些文件都还保留着。
+
+> 回退到 TurtleBot3 时，`my_robot_bringup/models/turtlebot3_burger/` 里的自定义模型
 > 把激光改成 **12 m / 10 Hz**（原版 3.5 m / 5 Hz），用于改善长廊里的 SLAM 可观测性。
 > `sim.launch.py` 会优先使用本包 models/ 下的模型；没有时回退到系统安装的版本。
 
@@ -163,11 +202,16 @@ ros2 run sensor_interface_lib sensor_monitor
 
 ### 虚拟机渲染说明
 
-开发机（VMware，8 vCPU / 16 GB）已关闭 VMware 3D 加速，默认走 **Mesa llvmpipe
-软件渲染**（`software_rendering:=true`）。如果开着 3D 加速却用软件渲染会浪费性能，
-此时可以传 `software_rendering:=false`；反过来，没有 3D 加速却走硬件渲染时
-Gazebo 的 EGL 会初始化失败，表现为 `/scan` 一直没数据（日志里是
-`libEGL warning: egl: failed to create dri2 screen`）。
+开发机（VMware，8 vCPU / 16 GB）已关闭 VMware 3D 加速，Mesa 会自动选择
+**llvmpipe 软件渲染**。
+
+- **TB4（默认）**：TB4 已经不用 gz 的渲染类传感器（激光改用 CPU 射线投射），
+  所以 server 端不再有 GPU 雷达段错误问题。`LIBGL_ALWAYS_SOFTWARE=1` 只加在
+  **gz GUI 和 RViz** 两个显示进程上（`additional_env`），否则窗口会闪一下变黑。
+- **TurtleBot3（回退）**：`sim.launch.py` 仍保留 `software_rendering` 参数，
+  默认 `true`，对整条 launch 生效；实测 `false` 也能正常出 `/scan`。
+- 如果 GUI + RViz + 自动探索一起跑太卡（llvmpipe 下两个渲染窗口很吃 CPU），
+  建议用 `headless:=true rviz:=true`，只保留 RViz 看地图。
 
 ## 建图（第二阶段）：可插拔后端
 
@@ -220,10 +264,19 @@ Gazebo 的 EGL 会初始化失败，表现为 `/scan` 一直没数据（日志�
 - `mapping_lib` 的 `SlamToolboxBackend` 只订阅 `/map` 缓存，对外接口与 odom_grid 一致
 - 启动顺序：先等第一帧 `/scan`，再由带重试的脚本 configure/activate；高负载下
   官方 launch 的一次性生命周期激活可能超时，节点会停在 inactive
-- `minimum_travel_distance` / `minimum_travel_heading` 设为 `0`：机器人静止时也处理扫描。
-  这两个值若大于 0，启动阶段机器人没动，地图会一直保持 0×0
+- `minimum_travel_distance` / `minimum_travel_heading` 设为 `0.05`：机器人移动
+  5 cm / 0.05 rad 后建一个节点。全 `0` 会把每帧都建成节点，里程计的小误差更容易
+  累积成墙体双线；启动阶段如果机器人完全不动，地图会保持 0×0（动起来就开始建图）
+- `loop_search_maximum_distance` 从 3 m 放宽到 6 m：房间只有 10 m × 8 m，3 m
+  搜索半径常常够不到回环
 - 自动降速：`mapping_backend:=slam_toolbox` 时 bringup 会把导航速度限制为
-  **0.15 m/s / 0.5 rad/s**，减少长廊等弱约束环境里的匹配漂移
+  **0.15 m/s / 0.5 rad/s**（和 TB4 odom_grid 相同）。更低速度会明显拖慢探索，
+  只有在确实需要压匹配残差时再手动降到 0.10/0.35
+
+> slam_toolbox 是“轮式 odom 预测 + 扫描匹配”的图优化 SLAM。仿真的轮子在转弯/
+> 门口仍会打滑，odom 与真值会差出几十厘米；扫描匹配能把大部分修正回来，但
+> 5 cm 分辨率下 1–2 格残差看起来就是“轻微双线”。要彻底干净只能用真值 odom
+> （那就不是 SLAM 了）。
 
 > slam_toolbox 刚启动时地图来自少量扫描，射线之间会有细小的未知缝隙。
 > 导航允许未知格通行（`unknown_penalty` 加代价），配合激光安全距离，
@@ -295,9 +348,9 @@ RViz 中 `/frontiers` 显示绿色候选边界点，红色球是当前探索目�
 > Gazebo GUI 和 RViz 仍会占用一部分渲染资源。追求建图速度时用 `headless:=true`，
 > 需要看地图时再加 `rviz:=true`。
 
-当前限制：odom_grid 不做扫描匹配/回环（仿真里程计足够准）；TurtleBot3 激光相对底盘
-约 2 cm 的平移未补偿；slam_toolbox 后端在狭窄走廊里的自动探索目标仍可能超时，需要
-继续调参。
+当前限制：odom_grid 不做扫描匹配/回环（仿真里程计足够准）；激光相对底盘的平移
+（TB3 约 2 cm、TB4 约 4 mm）未补偿；slam_toolbox 后端在狭窄走廊里的自动探索目标
+仍可能超时，需要继续调参。
 
 ## 栅格导航（第三阶段）
 
@@ -316,6 +369,9 @@ RViz 中 `/frontiers` 显示绿色候选边界点，红色球是当前探索目�
 - 航向误差大于 0.6 rad 时原地转向，接近目标自动减速
 - 每 `replan_period` 秒重规划一次，到达 `goal_tolerance` 内判定成功并停车
 - 激光前向安全距离内只转向不前进，防止顶着墙走导致里程计漂移
+- 激光数据缺失或过期超过 1 s 时直接停车等待（TB4 软渲染下雷达会间歇性丢帧，
+  不能拿旧扫描“盲开”）
+- 前方/后方扇面完全没有有效回波时按“受阻”处理，不把缺失扇面当成空旷
 
 发目标（RViz 里用 **2D Goal Pose** 工具，或命令行）：
 
@@ -334,7 +390,7 @@ ros2 topic pub --once /goal_pose geometry_msgs/msg/PoseStamped \
 | `slow_distance` | `1.00` | 前方障碍小于此距离时线性减速（m） |
 | `unknown_penalty` | `2.0` | 未知格额外代价倍数（0 表示与空闲同价） |
 | `goal_tolerance` | `0.15` | 到达判定距离（m） |
-| `max_linear_speed` / `max_angular_speed` | `0.30` / `0.9` | 速度上限（m/s、rad/s；0.30 超过 burger 硬件上限，仅仿真用，真机改回 0.22） |
+| `max_linear_speed` / `max_angular_speed` | `0.30` / `0.9` | 节点默认；bringup 对 **TB4 强制 0.15 / 0.5**（更重、激光有效帧率低），TB3 的 odom_grid 仍可用 0.30 / 0.9 |
 | `lookahead_distance` | `0.32` | 前视距离（m） |
 | `control_rate` | `20.0` | 控制频率（Hz） |
 | `replan_period` | `1.0` | 重规划周期（s） |
@@ -348,13 +404,17 @@ ros2 topic pub --once /goal_pose geometry_msgs/msg/PoseStamped \
 当前限制：没有动态避障和恢复行为（卡住时需要重新发目标）；未知格是“乐观可通行”，
 只靠激光安全距离兜底，不做完整的局部代价地图。
 
-> ⚠️ 里程计依赖轮子不打滑。如果控制层持续顶着墙走，仿真里程计会快速漂移并毁掉地图，
-> 所以控制器加了激光前向安全距离（`safety_distance`），太近时只原地转向；
-> 同时把速度降到 0.15 m/s。实测 3 分钟探索后 odom 与 Gazebo 真值误差约 5 cm。
+> ⚠️ 里程计依赖轮子不打滑。如果控制层持续顶着墙走，仿真里程计会快速漂移并毁掉地图
+> （TB4 仿真里实测过被顶墙后 odom 偏出 6 m）。为此做了三层保护：激光前向安全距离
+> （`safety_distance`）、激光数据过期即停车、以及 TB4 默认 0.15 m/s / 0.5 rad/s 的低速。
+> 正常探索时 odom 与 Gazebo 真值误差约 10 cm/几米。
 
-## TurtleBot3 官方仿真（备查）
+## TurtleBot3 回退仿真（备查）
 
-> 本项目的 `my_robot_bringup` 不要求该环境变量（未设置时默认 `burger`，可用 `model:=` 覆盖）。
+> 默认机器人是 TB4 Lite；只有传 `robot:=turtlebot3` 时才走下面这套。
+> 本项目的 `my_robot_bringup` 不要求 `TURTLEBOT3_MODEL` 环境变量（未设置时默认
+> `burger`，可用 `model:=` 覆盖）。
+
 > 下面这条只针对 TurtleBot3 官方 launch：**必须先设置机器人型号**，否则会因
 > `os.environ['TURTLEBOT3_MODEL']` 取不到值直接失败：
 
@@ -463,4 +523,5 @@ done
 - [x] 建图后端抽象 + slam_toolbox 接入（`mapping_backend:=slam_toolbox`）
 - [x] 第三阶段：栅格导航（`navigation_lib`，A* + 路径跟踪）
 - [x] 附加：前沿自动探索（`frontier_explorer`，`explore:=true`）
+- [x] 默认仿真机器人换成 TurtleBot 4 Lite（`robot:=turtlebot3` 可回退）
 - [ ] 第四阶段：房间分区 + 拓扑图（`room_segment_lib`、`my_robot_msgs`）

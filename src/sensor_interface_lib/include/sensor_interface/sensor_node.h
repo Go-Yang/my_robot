@@ -60,6 +60,7 @@ private:
     sensor_msgs::msg::Imu::SharedPtr latest_imu_;
 
     std::atomic<std::size_t> scan_count_{0};
+    std::atomic<std::size_t> invalid_scan_count_{0};
     std::atomic<std::size_t> odom_count_{0};
     std::atomic<std::size_t> imu_count_{0};
 

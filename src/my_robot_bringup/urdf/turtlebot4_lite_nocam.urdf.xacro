@@ -1,0 +1,53 @@
+<?xml version="1.0" ?>
+<!--
+  TurtleBot 4 Lite 模型，去掉 OAK-D 相机。
+
+  官方 turtlebot4_description 的 Lite URDF 带一个 rgbd_camera 传感器
+  （always_on=1、30 Hz）。本项目的建图/导航只用激光，而这台开发机没有
+  3D 加速、走 Mesa 软件渲染；gz 的 Sensors 系统在初始化该相机时会在
+  Ogre 渲染线程里段错误（headless 下必现）。去掉相机后机器人模型、底盘、
+  RPLIDAR 与官方 Lite 完全一致，只少了相机和它的支架上的相机本体。
+
+  其余内容复制自：
+  /opt/ros/jazzy/share/turtlebot4_description/urdf/lite/turtlebot4.urdf.xacro
+-->
+<robot name="turtlebot4" xmlns:xacro="http://ros.org/wiki/xacro">
+  <!-- Base create3 model（其中声明了 gazebo / namespace 两个 xacro arg） -->
+  <xacro:include filename="$(find irobot_create_description)/urdf/create3.urdf.xacro" />
+  <xacro:include filename="$(find turtlebot4_description)/urdf/sensors/rplidar.urdf.xacro" />
+  <xacro:include filename="$(find turtlebot4_description)/urdf/sensors/camera_bracket.urdf.xacro" />
+
+  <!-- Mechanical properties -->
+  <xacro:property name="rplidar_x_offset"      value="${0.393584*cm2m}"/>
+  <xacro:property name="rplidar_y_offset"      value="${0*cm2m}"/>
+  <xacro:property name="rplidar_z_offset"      value="${7.529272*cm2m}"/>
+
+  <xacro:property name="camera_mount_x_offset" value="${-9*cm2m}"/>
+  <xacro:property name="camera_mount_y_offset" value="${0*cm2m}"/>
+  <xacro:property name="camera_mount_z_offset" value="${2.914772*cm2m}"/>
+
+  <!-- Turtlebot4 sensor definitions -->
+
+  <!-- 官方模型把 RPLIDAR 相对底盘转了 90°（rpy 0 0 pi/2），但本项目的
+       odom_grid 建图假定激光 0° 与底盘 +x 对齐（TurtleBot3 就是这样）。
+       这里把偏航改成 0，否则地图会相对 odom 旋转 90°，导航方向会错。 -->
+  <xacro:rplidar name="rplidar" parent_link="base_link" gazebo="$(arg gazebo)">
+    <origin xyz="${rplidar_x_offset} ${rplidar_y_offset} ${rplidar_z_offset + base_link_z_offset}"
+            rpy="0 0 0"/>
+  </xacro:rplidar>
+
+  <xacro:camera_bracket name="oakd_camera_bracket" parent_link="base_link">
+    <origin xyz="${camera_mount_x_offset} ${camera_mount_y_offset} ${camera_mount_z_offset + base_link_z_offset}"/>
+  </xacro:camera_bracket>
+
+  <!-- 官方模型在这里调用 <xacro:oakd model="lite" ...>，本项目不需要相机 -->
+
+  <!-- Base footprint for navigation -->
+  <link name="base_footprint" />
+  <joint name="base_footprint_joint" type="fixed">
+    <!-- Create3's base_link is already on the ground -->
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="base_footprint" />
+  </joint>
+</robot>

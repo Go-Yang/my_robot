@@ -185,6 +185,25 @@ void NavigationModule::controlCallback() {
     }
 
     const rclcpp::Time now = node_->now();
+
+    // 激光数据不可用/过期时不允许继续走：TB4 的软件渲染雷达会间歇性
+    // 只输出 inf，scan_filter 会把坏帧丢掉；如果导航继续用旧扫描“盲开”，
+    // 很容易顶墙导致轮子打滑、里程计漂移，地图就毁了。
+    auto scan = sensor_->getLatestScan();
+    if (!scan || scan->ranges.empty()) {
+        RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
+                             "没有可用的激光数据，停车等待");
+        publishStop();
+        return;
+    }
+    const double scan_age = (now - rclcpp::Time(scan->header.stamp)).seconds();
+    if (scan_age > 1.0) {
+        RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000,
+                             "激光数据已过期 %.1f s，停车等待", scan_age);
+        publishStop();
+        return;
+    }
+
     const bool need_plan = path_.empty() ||
         (now - last_plan_time_).seconds() >= replan_period_;
 
@@ -227,10 +246,11 @@ void NavigationModule::controlCallback() {
     double linear = 0.0;
     if (std::abs(heading_error) < 0.6) {
         linear = max_linear_speed_ * std::cos(heading_error);
-        // 接近目标时减速
-        const double slow_radius = 0.6;
+        // 接近目标时减速；0.4 m 减速区、最低 40% 速度，
+        // 避免离目标还有 30-40 cm 时爬行太久
+        const double slow_radius = 0.4;
         if (goal_dist < slow_radius) {
-            linear *= std::max(0.25, goal_dist / slow_radius);
+            linear *= std::max(0.4, goal_dist / slow_radius);
         }
     }
 
@@ -239,7 +259,6 @@ void NavigationModule::controlCallback() {
 
     // 激光安全保护：前方减速/停车转向，转弯时也检查转弯侧。
     // 顶着墙走会让轮子打滑，仿真里程计快速漂移，进而毁掉地图。
-    auto scan = sensor_->getLatestScan();
     if (scan && !scan->ranges.empty()) {
         constexpr double kFrontHalfAngle = 0.50;  // ±0.5 rad 视为前方
         constexpr double kRearHalfAngle = 2.50;   // |angle| > 2.5 rad 视为后方
@@ -268,6 +287,21 @@ void NavigationModule::controlCallback() {
             if (angle < -0.25 && angle > -1.5) {
                 right_min = std::min(right_min, range);
             }
+        }
+
+        // 部分扇面缺失时不能当成“前方空旷”：TB4 软件渲染雷达会丢扇面，
+        // 旧逻辑里 front_min 保持 inf 会直接全速前进，顶着墙把轮子打滑。
+        if (!std::isfinite(front_min)) {
+            front_min = 0.0;
+        }
+        if (!std::isfinite(rear_min)) {
+            rear_min = 0.0;
+        }
+        if (!std::isfinite(left_min)) {
+            left_min = 0.0;
+        }
+        if (!std::isfinite(right_min)) {
+            right_min = 0.0;
         }
 
         if (front_min < safety_distance_) {
@@ -316,12 +350,13 @@ void NavigationModule::controlCallback() {
                 consecutive_blocks_ = 0;
             }
 
-            // 进入减速区：随距离线性降速，避免高速冲到墙前
+            // 进入减速区：随距离线性降速，避免高速冲到墙前。
+            // 最低保留 35% 速度，否则在门口/墙边会爬行到几乎不动。
             if (front_min < slow_distance_) {
                 const double scale = std::clamp(
                     (front_min - 0.15) / std::max(0.01, slow_distance_ - 0.15),
                     0.0, 1.0);
-                linear *= std::max(0.2, scale);
+                linear *= std::max(0.35, scale);
             }
 
             // 转弯侧贴墙时限制角速度，避免车尾扫墙

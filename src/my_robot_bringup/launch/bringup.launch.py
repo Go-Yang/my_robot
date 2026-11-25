@@ -27,9 +27,13 @@ from launch_ros.parameter_descriptions import ParameterValue
 def generate_launch_description():
     bringup_dir = get_package_share_directory('my_robot_bringup')
     sim_launch = os.path.join(bringup_dir, 'launch', 'sim.launch.py')
+    tb4_sim_launch = os.path.join(
+        bringup_dir, 'launch', 'sim_turtlebot4.launch.py')
 
     use_sim_time = LaunchConfiguration('use_sim_time')
+    robot = LaunchConfiguration('robot')
     model = LaunchConfiguration('model')
+    tb4_model = LaunchConfiguration('tb4_model')
     world = LaunchConfiguration('world')
     headless = LaunchConfiguration('headless')
     rviz = LaunchConfiguration('rviz')
@@ -41,7 +45,23 @@ def generate_launch_description():
     y_pose = LaunchConfiguration('y_pose')
     yaw = LaunchConfiguration('yaw')
 
-    sim = IncludeLaunchDescription(
+    # 默认 TB4 Lite；robot:=turtlebot3 回退到原来的 TurtleBot3 仿真
+    sim_tb4 = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(tb4_sim_launch),
+        launch_arguments={
+            'tb4_model': tb4_model,
+            'world': world,
+            'headless': headless,
+            'rviz': rviz,
+            'x_pose': x_pose,
+            'y_pose': y_pose,
+            'yaw': yaw,
+        }.items(),
+        condition=IfCondition(PythonExpression(
+            ["'", robot, "' == 'turtlebot4_lite'"])),
+    )
+
+    sim_tb3 = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(sim_launch),
         launch_arguments={
             'model': model,
@@ -53,6 +73,8 @@ def generate_launch_description():
             'y_pose': y_pose,
             'yaw': yaw,
         }.items(),
+        condition=IfCondition(PythonExpression(
+            ["'", robot, "' == 'turtlebot3'"])),
     )
 
     # 没有指定 name，launch_ros 会把参数写到 "/**"，对进程内所有节点生效
@@ -67,13 +89,22 @@ def generate_launch_description():
             'use_sim_time': use_sim_time,
             'mapping_backend': ParameterValue(mapping_backend, value_type=str),
             # SLAM 模式降低速度，避免扫描匹配跟不上导致叠图
+            # TB4 / slam_toolbox 用 0.15 / 0.5；TB3 的 odom_grid 仍可用 0.30 / 0.9。
+            # 之前 slam_toolbox 用过 0.10 / 0.35，但探索太慢；现在放回 0.15。
             'max_linear_speed': ParameterValue(
                 PythonExpression([
-                    "0.15 if '", mapping_backend, "' == 'slam_toolbox' else 0.30"]),
+                    "0.15 if ('", mapping_backend, "' == 'slam_toolbox'"
+                    " or '", robot, "' == 'turtlebot4_lite') else 0.30"]),
                 value_type=float),
             'max_angular_speed': ParameterValue(
                 PythonExpression([
-                    "0.50 if '", mapping_backend, "' == 'slam_toolbox' else 0.90"]),
+                    "0.50 if ('", mapping_backend, "' == 'slam_toolbox'"
+                    " or '", robot, "' == 'turtlebot4_lite') else 0.90"]),
+                value_type=float),
+            # TB4 的减速区缩短到 0.6 m，避免在 1 m 门洞里一直处在减速区
+            'slow_distance': ParameterValue(
+                PythonExpression([
+                    "0.60 if '", robot, "' == 'turtlebot4_lite' else 1.00"]),
                 value_type=float),
         }],
     )
@@ -130,7 +161,11 @@ def generate_launch_description():
         executable='frontier_explorer',
         name='frontier_explorer',
         output='screen',
-        parameters=[{'use_sim_time': use_sim_time}],
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            # 低速探索时 8 s 内很容易走不了 15 cm，导致目标被误拉黑
+            'progress_timeout': 15.0,
+        }],
         condition=IfCondition(explore),
     )
 
@@ -139,8 +174,16 @@ def generate_launch_description():
             'use_sim_time', default_value='true',
             description='使用 Gazebo 仿真时钟'),
         DeclareLaunchArgument(
+            'robot', default_value='turtlebot4_lite',
+            choices=['turtlebot4_lite', 'turtlebot3'],
+            description='仿真机器人：turtlebot4_lite（默认）/ turtlebot3'),
+        DeclareLaunchArgument(
+            'tb4_model', default_value='lite',
+            choices=['lite', 'standard'],
+            description='TurtleBot4 型号（robot:=turtlebot4_lite 时生效）'),
+        DeclareLaunchArgument(
             'model', default_value=os.environ.get('TURTLEBOT3_MODEL', 'burger'),
-            description='TurtleBot3 型号：burger / waffle / waffle_pi'),
+            description='TurtleBot3 型号（robot:=turtlebot3 时生效）：burger / waffle / waffle_pi'),
         DeclareLaunchArgument(
             'world',
             default_value=os.path.join(bringup_dir, 'worlds', 'room_world.world'),
@@ -163,7 +206,8 @@ def generate_launch_description():
         DeclareLaunchArgument('x_pose', default_value='-3.5'),
         DeclareLaunchArgument('y_pose', default_value='2.0'),
         DeclareLaunchArgument('yaw', default_value='0.0'),
-        sim,
+        sim_tb4,
+        sim_tb3,
         wait_scan,
         slam_toolbox_launch,
         robot_node,

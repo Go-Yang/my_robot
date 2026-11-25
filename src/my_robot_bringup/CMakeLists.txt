@@ -9,6 +9,7 @@ install(DIRECTORY
   config
   worlds
   models
+  urdf
   rviz
   DESTINATION share/${PROJECT_NAME}
 )
@@ -16,6 +17,9 @@ install(DIRECTORY
 install(PROGRAMS
   scripts/wait_for_scan.py
   scripts/activate_node.sh
+  scripts/tb4_urdf.py
+  scripts/scan_filter.py
+  scripts/world_lidar.py
   DESTINATION share/${PROJECT_NAME}/scripts
 )
 

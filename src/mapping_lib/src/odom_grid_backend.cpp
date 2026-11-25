@@ -163,15 +163,14 @@ void OdomGridBackend::integrateScan(
             continue;
         }
 
-        bool hit = false;
-        double cast_range = 0.0;
         if (std::isinf(range) || range > scan.range_max) {
-            // 没有有效回波：仍按最大量程标记射线经过的空闲区域
-            cast_range = scan.range_max;
-        } else {
-            hit = true;
-            cast_range = range;
+            // 没有有效回波：直接跳过，不要把射线按最大量程标成空闲。
+            // TB4 的软件渲染雷达会间歇性丢扇面，inf 射线若被当成 12 m
+            // 空闲射线，会把已经建好的墙擦掉（表现为地图叠图/越来越乱）。
+            continue;
         }
+        const bool hit = true;
+        const double cast_range = range;
 
         const double angle =
             scan.angle_min + static_cast<double>(i) * scan.angle_increment;

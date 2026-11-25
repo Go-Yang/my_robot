@@ -3,12 +3,13 @@
 # 一键启动仿真 + 主节点（内部自动 source ROS 与工作空间）
 #
 # 用法：
-#   ./sim.sh                          # Gazebo GUI + 仿真 + 主节点
+#   ./sim.sh                          # Gazebo GUI + 仿真 + 主节点（默认 TB4 Lite）
 #   ./sim.sh headless:=true           # 只跑 Gazebo server
 #   ./sim.sh rviz:=true               # 同时打开 RViz
 #   ./sim.sh explore:=true            # 前沿自动探索建图
 #   ./sim.sh mapping_backend:=slam_toolbox rviz:=true   # 用 slam_toolbox 建图（默认 odom_grid）
-#   ./sim.sh model:=waffle            # 换机器人型号
+#   ./sim.sh tb4_model:=standard      # TB4 换 Standard 型号
+#   ./sim.sh robot:=turtlebot3 model:=waffle            # 回退到 TurtleBot3
 #   ./sim.sh --show-args              # 只查看可用参数
 
 # 工作空间根目录（取脚本所在目录，项目放在任意路径都不用改）
